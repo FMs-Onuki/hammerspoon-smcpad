@@ -23,8 +23,8 @@ Sections, top to bottom:
 3. Window enumeration across Spaces: `hs.window.filter` with `forceRefreshOnSpaceChange`,
    a `keepActive()` "warmer" filter, and per-app filters (`filterForApp`).
 4. Focus / window cycling: `focusWindow`, `cycleWindows`, `focus`.
-5. Window placement: `place(fraction)`.
-6. Screen/Space actions: Mission Control, Notification Center, `switchDesktop`.
+5. Window placement: `place(fraction)`, `moveToNextScreenMaximized`.
+6. Presentation/screen actions: PowerPoint slide paging (`slide`), Notification Center.
 7. `PAD_ACTION`: MIDI note number (36–51, ch 9) → action.
 8. MIDI wiring: `handleMidi`, `syncDevices`, `hs.midi.deviceCallback` (hot-plug).
 
@@ -41,7 +41,9 @@ Sections, top to bottom:
   Do not "simplify" these without understanding them:
   - Do **not** use `setOverrideFilter` (re-enables apps the filter excludes by default, incl. Hammerspoon).
   - The warmer filter must stay `keepActive()`, otherwise windows on other Spaces drop out of the cache.
-  - Synthetic ⌃←/⌃→ is ignored by macOS; Space switching uses `hs.spaces`.
+  - Synthetic ⌃←/⌃→ is ignored by macOS; moving to another Space (in `focusWindow`) uses `hs.spaces`.
+  - Slide paging posts PageUp/PageDown to PowerPoint's process (no AppleScript, to avoid needing
+    Automation permission).
 
 ## Load / test
 

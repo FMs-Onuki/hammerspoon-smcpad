@@ -34,6 +34,7 @@ local APPS = {
   browser    = { name = "Google Chrome",      bundleIDs = { "com.google.Chrome" } },
   claude     = { name = "Claude",             bundleIDs = { "com.anthropic.claudefordesktop" } },
   notes      = { name = "Notes",              bundleIDs = { "com.apple.Notes" } },
+  powerpoint = { name = "Microsoft PowerPoint", bundleIDs = { "com.microsoft.Powerpoint" } },  -- スライド送り用
 }
 
 -- ▲▲▲ 変更箇所ここまで ▲▲▲ ------------------------------------------
@@ -270,18 +271,48 @@ local leftHalf  = place({ x = 0,   y = 0, w = 0.5, h = 1 })
 local rightHalf = place({ x = 0.5, y = 0, w = 0.5, h = 1 })
 local maximize  = place({ x = 0,   y = 0, w = 1,   h = 1 })
 
+-- フォーカス中のウィンドウを次のモニターへ移し、そこの作業領域いっぱいに広げる。
+-- 2台なら押すたびに行き来、3台以上なら順番に回る。マウスカーソルは動かさない。
+local function moveToNextScreenMaximized()
+  local win = hs.window.focusedWindow()
+  if not win then return end
+  local screen = win:screen()
+  local target = screen and screen:next()
+  if not target or target:id() == screen:id() then
+    print("[pad] screen: 移動先のモニターがない（1台のみ）")
+    return
+  end
+  win:setFrame(target:frame(), 0)  -- frame() はメニューバー/Dockを除いた作業領域
+  print(string.format("[pad] screen: %s → %s", screen:name() or "?", target:name() or "?"))
+end
+
 -- ---------------------------------------------------------------------
--- 画面 / スペース操作
+-- プレゼン / 画面操作
 -- ---------------------------------------------------------------------
 
--- Mission Control を開く（⌃↑のショートカットに依存しない専用API方式）
-local function missionControl()
-  if hs.spaces and hs.spaces.toggleMissionControl then
-    hs.spaces.toggleMissionControl()         -- Hammerspoon標準API（推奨）
-  else
-    hs.execute([[open -a "Mission Control"]]) -- フォールバック
+-- PowerPoint のスライドを前後に送る。
+-- キーは PowerPoint 宛てに送るので、他のアプリを前面にしていても効く。
+-- 矢印キーではなく PageUp/PageDown を使う: 矢印だと編集画面でテキスト選択中に
+-- カーソル移動になってしまうが、PageUp/PageDown は編集画面でもスライドショー中でもページが変わる。
+-- AppleScript 方式はオートメーション権限が別途必要になるので使わない。
+local function slide(key)
+  return function()
+    local app = runningApp(APPS.powerpoint)
+    if not app then
+      print("[pad] slide: PowerPoint が起動していない")
+      return
+    end
+    local front = hs.application.frontmostApplication()
+    if front and front:pid() == app:pid() then
+      hs.eventtap.keyStroke({}, key, 0)       -- 前面なら通常送出（最も確実）
+    else
+      hs.eventtap.keyStroke({}, key, 0, app)  -- 背面なら PowerPoint のプロセスへ直接送る
+    end
   end
 end
+
+local prevSlide = slide("pageup")
+local nextSlide = slide("pagedown")
 
 -- 通知センターを開く。AppleScript方式はオートメーション権限や項目名で弾かれやすいので、
 -- メニューバー右端（時計）を直接クリックする。必要権限はアクセシビリティのみ。
@@ -298,43 +329,15 @@ local function openNotificationCenter()
     target.x, target.y, screen:name() or "?"))
 end
 
--- デスクトップ（操作スペース）を左右に切り替える。
--- macOS は合成された ⌃←/⌃→ をスペース切替に対して無視する（検証済み）ため、
--- キー送出ではなく hs.spaces API で隣のスペースへ直接移動する。
--- dir: -1 = 左隣, +1 = 右隣
-local function switchDesktop(dir)
-  local screen = hs.screen.mainScreen()
-  local list = hs.spaces.spacesForScreen(screen)        -- 並び順のスペースID一覧
-  local active = hs.spaces.activeSpaceOnScreen(screen)  -- 現在のスペースID
-  if not list or not active then
-    print("[pad] desktop: spaces取得失敗")
-    return
-  end
-  local idx
-  for i, s in ipairs(list) do if s == active then idx = i break end end
-  if not idx then
-    print("[pad] desktop: 現在地が一覧に見つからない")
-    return
-  end
-  local target = list[idx + dir]
-  if not target then
-    print("[pad] desktop: 端なので移動先なし")
-    return
-  end
-  hs.spaces.gotoSpace(target)
-  print(string.format("[pad] desktop %s (%d→%d)",
-    dir > 0 and "→ next" or "← prev", active, target))
-end
-
 -- ---------------------------------------------------------------------
 -- パッド割り当て
 -- ---------------------------------------------------------------------
 -- 実機の並びは MPC/ドラム式（36が左下、行ごとに上へ）:
 --
---   上段  [48 デスクトップ←] [49 デスクトップ→] [50 MissionControl] [51 通知センター]   ← 画面/スペース
---   3段目 [44 左半分]        [45 右半分]        [46 最大化]         [47 ウィンドウ巡回] ← ウィンドウ操作
---   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]         [43 メモ]           ← 連絡/情報
---   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]           [39 Sourcetree]     ← 開発
+--   上段  [48 スライド←]     [49 スライド→]     [50 別モニター最大化] [51 通知センター]   ← プレゼン/画面
+--   3段目 [44 左半分]        [45 右半分]        [46 最大化]           [47 ウィンドウ巡回] ← ウィンドウ操作
+--   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]           [43 メモ]           ← 連絡/情報
+--   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]             [39 Sourcetree]     ← 開発
 --
 -- 手前（下段）ほど使用頻度の高い開発系、奥（上段）ほど画面全体に効く操作。
 local PAD_ACTION = {
@@ -353,10 +356,10 @@ local PAD_ACTION = {
   [45] = rightHalf,
   [46] = maximize,
   [47] = cycleFrontmostWindows,
-  -- 上段: 画面 / スペース
-  [48] = function() switchDesktop(-1) end,
-  [49] = function() switchDesktop(1) end,
-  [50] = missionControl,
+  -- 上段: プレゼン / 画面
+  [48] = prevSlide,
+  [49] = nextSlide,
+  [50] = moveToNextScreenMaximized,
   [51] = openNotificationCenter,
 }
 
