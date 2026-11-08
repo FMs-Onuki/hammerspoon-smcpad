@@ -151,14 +151,32 @@ end
 -- フォーカス / ウィンドウ巡回
 -- ---------------------------------------------------------------------
 
--- スペース切替の完了を待つ上限（秒）。これを過ぎたら諦めてフォーカスを当てる。
-local SPACE_SWITCH_TIMEOUT = 1.5
+-- 「ウインドウ」メニューの名前。アプリや言語設定で表記が違うので、上から順に探す。
+local WINDOW_MENU_NAMES = { "ウインドウ", "ウィンドウ", "Window" }
 
--- ウィンドウをフォーカスする。別デスクトップ（スペース）にある場合は、
--- そのスペースへ移動し、切り替えが終わってからフォーカスする。
--- macOS は「アプリ切り替え時にウィンドウのあるスペースへ移動」がデフォルトでオフなので、
--- win:focus() を呼ぶだけでは他スペースのウィンドウは前面に出てこない（無反応に見える）。
--- hs.spaces で明示的に移動することで、macOS側の設定に依存せず動く。
+-- アプリの「ウインドウ」メニューにあるウィンドウ一覧から、win をタイトルで選ぶ。選べたら true。
+-- 手でこのメニューから選んだときと同じく、別デスクトップのウィンドウならそこへ移動する。
+-- 同じタイトルが複数あると上にある方が選ばれる。
+local function selectFromWindowMenu(app, win)
+  local title = win:title()
+  if not title or title == "" then return false end
+  for _, menu in ipairs(WINDOW_MENU_NAMES) do
+    if app:selectMenuItem({ menu, title }) then return true end
+  end
+  return false
+end
+
+-- ウィンドウをフォーカスする。別デスクトップ（スペース）への移動は macOS 自身にさせる。
+--   別アプリから切り替えるとき → win:focus() だけ。アプリの切り替えで macOS が移動してくれる。
+--   同じアプリの中で巡回するとき → アプリの切り替えにならないので macOS は移動しない。
+--                                   代わりに「ウインドウ」メニューから選んで移動させる。
+--
+-- 前提: システム設定 → デスクトップとDock →「アプリケーションの切り替えで、アプリケーションの
+-- ウインドウが開いているスペースに移動」をオンにする（macOS の既定はオフ）。
+--
+-- hs.spaces.gotoSpace は使わないこと。あれは裏で Mission Control を開いてボタンをクリックする
+-- 方式で、macOS 27 では "unable to get Mission Control data from the Dock" で失敗する
+-- （macOS 26 までは動いていた）。
 local function focusWindow(win)
   if win:isMinimized() then win:unminimize() end
 
@@ -171,27 +189,15 @@ local function focusWindow(win)
     if s == activeSpace then onActiveSpace = true break end
   end
 
-  if onActiveSpace or not spaces[1] or not activeSpace then
-    win:focus()
-    return
+  -- 別デスクトップにある、前面アプリ自身のウィンドウ → ウインドウメニューから選ぶ
+  if not onActiveSpace and spaces[1] and activeSpace then
+    local app = win:application()
+    local front = hs.application.frontmostApplication()
+    if app and front and front:pid() == app:pid() and selectFromWindowMenu(app, win) then
+      return
+    end
   end
-
-  -- 別デスクトップ: 移動 → 切り替え完了を待つ → フォーカス
-  local target = spaces[1]
-  hs.spaces.gotoSpace(target)
-  print(string.format("[pad] スペース %s へ移動してフォーカス", tostring(target)))
-
-  local deadline = hs.timer.secondsSinceEpoch() + SPACE_SWITCH_TIMEOUT
-  hs.timer.waitUntil(
-    function()
-      return hs.spaces.activeSpaceOnScreen(screen) == target
-        or hs.timer.secondsSinceEpoch() > deadline
-    end,
-    function()
-      win:raise()
-      win:focus()
-    end,
-    0.05)
+  win:focus()
 end
 
 -- そのアプリの「今フォーカスしているウィンドウの次」へ移動する。
@@ -230,7 +236,6 @@ local function focus(spec)
     if front and front:pid() == app:pid() then
       if cycleWindows(app) then return end   -- 既に最前面 → 次のウィンドウへ
     else
-      -- app:activate() はスペースをまたがない（別デスクトップだと無反応になる）ので、
       -- 直前に使っていたウィンドウ（mainWindow）を focusWindow 経由で前面に出す。
       local win = app:mainWindow() or standardWindows(app)[1]
       if win then
@@ -252,12 +257,19 @@ end
 -- ---------------------------------------------------------------------
 -- ウィンドウ配置
 -- ---------------------------------------------------------------------
--- 画面の左半分・右半分・最大化。frame() はメニューバー/Dockを除いた作業領域。
+-- 配置に使う領域: メニューバーの下から画面の端まで（Dock は自動で隠す前提で、その分は空けない）。
+-- それでも下端まで伸びないときは macOS が古い領域を返している。`killall Dock` で直る。
+local function workArea(screen)
+  local full, f = screen:fullFrame(), screen:frame()
+  return { x = full.x, y = f.y, w = full.w, h = full.y + full.h - f.y }
+end
+
+-- 画面の左半分・右半分・最大化。
 local function place(fraction)
   return function()
     local win = hs.window.focusedWindow()
     if not win then return end
-    local f = win:screen():frame()
+    local f = workArea(win:screen())
     win:setFrame({
       x = f.x + f.w * fraction.x,
       y = f.y + f.h * fraction.y,
@@ -271,7 +283,7 @@ local leftHalf  = place({ x = 0,   y = 0, w = 0.5, h = 1 })
 local rightHalf = place({ x = 0.5, y = 0, w = 0.5, h = 1 })
 local maximize  = place({ x = 0,   y = 0, w = 1,   h = 1 })
 
--- フォーカス中のウィンドウを次のモニターへ移し、そこの作業領域いっぱいに広げる。
+-- フォーカス中のウィンドウを次のモニターへ移し、そこの画面いっぱい（メニューバーの下まで）に広げる。
 -- 2台なら押すたびに行き来、3台以上なら順番に回る。マウスカーソルは動かさない。
 local function moveToNextScreenMaximized()
   local win = hs.window.focusedWindow()
@@ -282,7 +294,7 @@ local function moveToNextScreenMaximized()
     print("[pad] screen: 移動先のモニターがない（1台のみ）")
     return
   end
-  win:setFrame(target:frame(), 0)  -- frame() はメニューバー/Dockを除いた作業領域
+  win:setFrame(workArea(target), 0)
   print(string.format("[pad] screen: %s → %s", screen:name() or "?", target:name() or "?"))
 end
 

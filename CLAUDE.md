@@ -41,7 +41,15 @@ Sections, top to bottom:
   Do not "simplify" these without understanding them:
   - Do **not** use `setOverrideFilter` (re-enables apps the filter excludes by default, incl. Hammerspoon).
   - The warmer filter must stay `keepActive()`, otherwise windows on other Spaces drop out of the cache.
-  - Synthetic ⌃←/⌃→ is ignored by macOS; moving to another Space (in `focusWindow`) uses `hs.spaces`.
+  - Moving to a window on another Space relies on macOS ("When switching to an application, switch
+    to a Space with open windows" must be on). From another app, `focusWindow` just calls `win:focus()`.
+    Within the same app (cycling) that is not an app switch, so macOS does not move; instead the
+    window is picked from the app's Window menu (`selectFromWindowMenu`, matched by title).
+    Do **not** use `hs.spaces.gotoSpace` (drives Mission Control; on macOS 27 it fails with
+    "unable to get Mission Control data from the Dock"). Synthetic ⌃←/⌃→ is ignored by macOS.
+  - Window placement uses `workArea()` (below the menu bar to the screen edge), not `screen:frame()`,
+    so the Dock area is never left empty (the Dock is auto-hidden). If windows still stop short of the
+    bottom, macOS itself is reporting a stale visible frame (apps clamp to it); `killall Dock` fixes it.
   - Slide paging posts PageUp/PageDown to PowerPoint's process (no AppleScript, to avoid needing
     Automation permission).
 
