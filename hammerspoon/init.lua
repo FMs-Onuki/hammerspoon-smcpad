@@ -34,6 +34,7 @@ local APPS = {
   browser    = { name = "Google Chrome",      bundleIDs = { "com.google.Chrome" } },
   claude     = { name = "Claude",             bundleIDs = { "com.anthropic.claudefordesktop" } },
   notes      = { name = "Notes",              bundleIDs = { "com.apple.Notes" } },
+  powerpoint = { name = "Microsoft PowerPoint", bundleIDs = { "com.microsoft.Powerpoint" } },  -- スライド送り用
 }
 
 -- ▲▲▲ 変更箇所ここまで ▲▲▲ ------------------------------------------
@@ -150,14 +151,32 @@ end
 -- フォーカス / ウィンドウ巡回
 -- ---------------------------------------------------------------------
 
--- スペース切替の完了を待つ上限（秒）。これを過ぎたら諦めてフォーカスを当てる。
-local SPACE_SWITCH_TIMEOUT = 1.5
+-- 「ウインドウ」メニューの名前。アプリや言語設定で表記が違うので、上から順に探す。
+local WINDOW_MENU_NAMES = { "ウインドウ", "ウィンドウ", "Window" }
 
--- ウィンドウをフォーカスする。別デスクトップ（スペース）にある場合は、
--- そのスペースへ移動し、切り替えが終わってからフォーカスする。
--- macOS は「アプリ切り替え時にウィンドウのあるスペースへ移動」がデフォルトでオフなので、
--- win:focus() を呼ぶだけでは他スペースのウィンドウは前面に出てこない（無反応に見える）。
--- hs.spaces で明示的に移動することで、macOS側の設定に依存せず動く。
+-- アプリの「ウインドウ」メニューにあるウィンドウ一覧から、win をタイトルで選ぶ。選べたら true。
+-- 手でこのメニューから選んだときと同じく、別デスクトップのウィンドウならそこへ移動する。
+-- 同じタイトルが複数あると上にある方が選ばれる。
+local function selectFromWindowMenu(app, win)
+  local title = win:title()
+  if not title or title == "" then return false end
+  for _, menu in ipairs(WINDOW_MENU_NAMES) do
+    if app:selectMenuItem({ menu, title }) then return true end
+  end
+  return false
+end
+
+-- ウィンドウをフォーカスする。別デスクトップ（スペース）への移動は macOS 自身にさせる。
+--   別アプリから切り替えるとき → win:focus() だけ。アプリの切り替えで macOS が移動してくれる。
+--   同じアプリの中で巡回するとき → アプリの切り替えにならないので macOS は移動しない。
+--                                   代わりに「ウインドウ」メニューから選んで移動させる。
+--
+-- 前提: システム設定 → デスクトップとDock →「アプリケーションの切り替えで、アプリケーションの
+-- ウインドウが開いているスペースに移動」をオンにする（macOS の既定はオフ）。
+--
+-- hs.spaces.gotoSpace は使わないこと。あれは裏で Mission Control を開いてボタンをクリックする
+-- 方式で、macOS 27 では "unable to get Mission Control data from the Dock" で失敗する
+-- （macOS 26 までは動いていた）。
 local function focusWindow(win)
   if win:isMinimized() then win:unminimize() end
 
@@ -170,27 +189,15 @@ local function focusWindow(win)
     if s == activeSpace then onActiveSpace = true break end
   end
 
-  if onActiveSpace or not spaces[1] or not activeSpace then
-    win:focus()
-    return
+  -- 別デスクトップにある、前面アプリ自身のウィンドウ → ウインドウメニューから選ぶ
+  if not onActiveSpace and spaces[1] and activeSpace then
+    local app = win:application()
+    local front = hs.application.frontmostApplication()
+    if app and front and front:pid() == app:pid() and selectFromWindowMenu(app, win) then
+      return
+    end
   end
-
-  -- 別デスクトップ: 移動 → 切り替え完了を待つ → フォーカス
-  local target = spaces[1]
-  hs.spaces.gotoSpace(target)
-  print(string.format("[pad] スペース %s へ移動してフォーカス", tostring(target)))
-
-  local deadline = hs.timer.secondsSinceEpoch() + SPACE_SWITCH_TIMEOUT
-  hs.timer.waitUntil(
-    function()
-      return hs.spaces.activeSpaceOnScreen(screen) == target
-        or hs.timer.secondsSinceEpoch() > deadline
-    end,
-    function()
-      win:raise()
-      win:focus()
-    end,
-    0.05)
+  win:focus()
 end
 
 -- そのアプリの「今フォーカスしているウィンドウの次」へ移動する。
@@ -229,7 +236,6 @@ local function focus(spec)
     if front and front:pid() == app:pid() then
       if cycleWindows(app) then return end   -- 既に最前面 → 次のウィンドウへ
     else
-      -- app:activate() はスペースをまたがない（別デスクトップだと無反応になる）ので、
       -- 直前に使っていたウィンドウ（mainWindow）を focusWindow 経由で前面に出す。
       local win = app:mainWindow() or standardWindows(app)[1]
       if win then
@@ -251,12 +257,19 @@ end
 -- ---------------------------------------------------------------------
 -- ウィンドウ配置
 -- ---------------------------------------------------------------------
--- 画面の左半分・右半分・最大化。frame() はメニューバー/Dockを除いた作業領域。
+-- 配置に使う領域: メニューバーの下から画面の端まで（Dock は自動で隠す前提で、その分は空けない）。
+-- それでも下端まで伸びないときは macOS が古い領域を返している。`killall Dock` で直る。
+local function workArea(screen)
+  local full, f = screen:fullFrame(), screen:frame()
+  return { x = full.x, y = f.y, w = full.w, h = full.y + full.h - f.y }
+end
+
+-- 画面の左半分・右半分・最大化。
 local function place(fraction)
   return function()
     local win = hs.window.focusedWindow()
     if not win then return end
-    local f = win:screen():frame()
+    local f = workArea(win:screen())
     win:setFrame({
       x = f.x + f.w * fraction.x,
       y = f.y + f.h * fraction.y,
@@ -270,18 +283,48 @@ local leftHalf  = place({ x = 0,   y = 0, w = 0.5, h = 1 })
 local rightHalf = place({ x = 0.5, y = 0, w = 0.5, h = 1 })
 local maximize  = place({ x = 0,   y = 0, w = 1,   h = 1 })
 
+-- フォーカス中のウィンドウを次のモニターへ移し、そこの画面いっぱい（メニューバーの下まで）に広げる。
+-- 2台なら押すたびに行き来、3台以上なら順番に回る。マウスカーソルは動かさない。
+local function moveToNextScreenMaximized()
+  local win = hs.window.focusedWindow()
+  if not win then return end
+  local screen = win:screen()
+  local target = screen and screen:next()
+  if not target or target:id() == screen:id() then
+    print("[pad] screen: 移動先のモニターがない（1台のみ）")
+    return
+  end
+  win:setFrame(workArea(target), 0)
+  print(string.format("[pad] screen: %s → %s", screen:name() or "?", target:name() or "?"))
+end
+
 -- ---------------------------------------------------------------------
--- 画面 / スペース操作
+-- プレゼン / 画面操作
 -- ---------------------------------------------------------------------
 
--- Mission Control を開く（⌃↑のショートカットに依存しない専用API方式）
-local function missionControl()
-  if hs.spaces and hs.spaces.toggleMissionControl then
-    hs.spaces.toggleMissionControl()         -- Hammerspoon標準API（推奨）
-  else
-    hs.execute([[open -a "Mission Control"]]) -- フォールバック
+-- PowerPoint のスライドを前後に送る。
+-- キーは PowerPoint 宛てに送るので、他のアプリを前面にしていても効く。
+-- 矢印キーではなく PageUp/PageDown を使う: 矢印だと編集画面でテキスト選択中に
+-- カーソル移動になってしまうが、PageUp/PageDown は編集画面でもスライドショー中でもページが変わる。
+-- AppleScript 方式はオートメーション権限が別途必要になるので使わない。
+local function slide(key)
+  return function()
+    local app = runningApp(APPS.powerpoint)
+    if not app then
+      print("[pad] slide: PowerPoint が起動していない")
+      return
+    end
+    local front = hs.application.frontmostApplication()
+    if front and front:pid() == app:pid() then
+      hs.eventtap.keyStroke({}, key, 0)       -- 前面なら通常送出（最も確実）
+    else
+      hs.eventtap.keyStroke({}, key, 0, app)  -- 背面なら PowerPoint のプロセスへ直接送る
+    end
   end
 end
+
+local prevSlide = slide("pageup")
+local nextSlide = slide("pagedown")
 
 -- 通知センターを開く。AppleScript方式はオートメーション権限や項目名で弾かれやすいので、
 -- メニューバー右端（時計）を直接クリックする。必要権限はアクセシビリティのみ。
@@ -298,43 +341,15 @@ local function openNotificationCenter()
     target.x, target.y, screen:name() or "?"))
 end
 
--- デスクトップ（操作スペース）を左右に切り替える。
--- macOS は合成された ⌃←/⌃→ をスペース切替に対して無視する（検証済み）ため、
--- キー送出ではなく hs.spaces API で隣のスペースへ直接移動する。
--- dir: -1 = 左隣, +1 = 右隣
-local function switchDesktop(dir)
-  local screen = hs.screen.mainScreen()
-  local list = hs.spaces.spacesForScreen(screen)        -- 並び順のスペースID一覧
-  local active = hs.spaces.activeSpaceOnScreen(screen)  -- 現在のスペースID
-  if not list or not active then
-    print("[pad] desktop: spaces取得失敗")
-    return
-  end
-  local idx
-  for i, s in ipairs(list) do if s == active then idx = i break end end
-  if not idx then
-    print("[pad] desktop: 現在地が一覧に見つからない")
-    return
-  end
-  local target = list[idx + dir]
-  if not target then
-    print("[pad] desktop: 端なので移動先なし")
-    return
-  end
-  hs.spaces.gotoSpace(target)
-  print(string.format("[pad] desktop %s (%d→%d)",
-    dir > 0 and "→ next" or "← prev", active, target))
-end
-
 -- ---------------------------------------------------------------------
 -- パッド割り当て
 -- ---------------------------------------------------------------------
 -- 実機の並びは MPC/ドラム式（36が左下、行ごとに上へ）:
 --
---   上段  [48 デスクトップ←] [49 デスクトップ→] [50 MissionControl] [51 通知センター]   ← 画面/スペース
---   3段目 [44 左半分]        [45 右半分]        [46 最大化]         [47 ウィンドウ巡回] ← ウィンドウ操作
---   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]         [43 メモ]           ← 連絡/情報
---   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]           [39 Sourcetree]     ← 開発
+--   上段  [48 スライド←]     [49 スライド→]     [50 別モニター最大化] [51 通知センター]   ← プレゼン/画面
+--   3段目 [44 左半分]        [45 右半分]        [46 最大化]           [47 ウィンドウ巡回] ← ウィンドウ操作
+--   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]           [43 メモ]           ← 連絡/情報
+--   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]             [39 Sourcetree]     ← 開発
 --
 -- 手前（下段）ほど使用頻度の高い開発系、奥（上段）ほど画面全体に効く操作。
 local PAD_ACTION = {
@@ -353,10 +368,10 @@ local PAD_ACTION = {
   [45] = rightHalf,
   [46] = maximize,
   [47] = cycleFrontmostWindows,
-  -- 上段: 画面 / スペース
-  [48] = function() switchDesktop(-1) end,
-  [49] = function() switchDesktop(1) end,
-  [50] = missionControl,
+  -- 上段: プレゼン / 画面
+  [48] = prevSlide,
+  [49] = nextSlide,
+  [50] = moveToNextScreenMaximized,
   [51] = openNotificationCenter,
 }
 

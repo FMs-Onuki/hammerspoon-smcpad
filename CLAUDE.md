@@ -23,8 +23,8 @@ Sections, top to bottom:
 3. Window enumeration across Spaces: `hs.window.filter` with `forceRefreshOnSpaceChange`,
    a `keepActive()` "warmer" filter, and per-app filters (`filterForApp`).
 4. Focus / window cycling: `focusWindow`, `cycleWindows`, `focus`.
-5. Window placement: `place(fraction)`.
-6. Screen/Space actions: Mission Control, Notification Center, `switchDesktop`.
+5. Window placement: `place(fraction)`, `moveToNextScreenMaximized`.
+6. Presentation/screen actions: PowerPoint slide paging (`slide`), Notification Center.
 7. `PAD_ACTION`: MIDI note number (36–51, ch 9) → action.
 8. MIDI wiring: `handleMidi`, `syncDevices`, `hs.midi.deviceCallback` (hot-plug).
 
@@ -41,7 +41,17 @@ Sections, top to bottom:
   Do not "simplify" these without understanding them:
   - Do **not** use `setOverrideFilter` (re-enables apps the filter excludes by default, incl. Hammerspoon).
   - The warmer filter must stay `keepActive()`, otherwise windows on other Spaces drop out of the cache.
-  - Synthetic ⌃←/⌃→ is ignored by macOS; Space switching uses `hs.spaces`.
+  - Moving to a window on another Space relies on macOS ("When switching to an application, switch
+    to a Space with open windows" must be on). From another app, `focusWindow` just calls `win:focus()`.
+    Within the same app (cycling) that is not an app switch, so macOS does not move; instead the
+    window is picked from the app's Window menu (`selectFromWindowMenu`, matched by title).
+    Do **not** use `hs.spaces.gotoSpace` (drives Mission Control; on macOS 27 it fails with
+    "unable to get Mission Control data from the Dock"). Synthetic ⌃←/⌃→ is ignored by macOS.
+  - Window placement uses `workArea()` (below the menu bar to the screen edge), not `screen:frame()`,
+    so the Dock area is never left empty (the Dock is auto-hidden). If windows still stop short of the
+    bottom, macOS itself is reporting a stale visible frame (apps clamp to it); `killall Dock` fixes it.
+  - Slide paging posts PageUp/PageDown to PowerPoint's process (no AppleScript, to avoid needing
+    Automation permission).
 
 ## Load / test
 
