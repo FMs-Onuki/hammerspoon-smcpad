@@ -295,9 +295,9 @@ local leftHalf  = place({ x = 0,   y = 0, w = 0.5, h = 1 })
 local rightHalf = place({ x = 0.5, y = 0, w = 0.5, h = 1 })
 local maximize  = place({ x = 0,   y = 0, w = 1,   h = 1 })
 
--- フォーカス中のウィンドウを次のモニターへ移し、そこの画面いっぱい（メニューバーの下まで）に広げる。
+-- フォーカス中のウィンドウを、大きさを変えずに次のモニターへ移す。
 -- 2台なら押すたびに行き来、3台以上なら順番に回る。マウスカーソルは動かさない。
-local function moveToNextScreenMaximized()
+local function moveToNextScreen()
   local win = hs.window.focusedWindow()
   if not win then return end
   local screen = win:screen()
@@ -306,12 +306,9 @@ local function moveToNextScreenMaximized()
     print("[pad] screen: 移動先のモニターがない（1台のみ）")
     return
   end
-  -- setFrame で位置と大きさを一度に設定すると、移動はするが最大化されなかった（実機）。
-  -- 大きさを当てた時点でまだ元のモニター上にあり、元の画面に収まるよう縮められるため。
-  -- 先に移動先へ移してから広げる。
-  local area = workArea(target)
-  win:setTopLeft({ x = area.x, y = area.y })
-  win:setSize({ w = area.w, h = area.h })
+  -- noResize: 大きさはそのまま（画面内の相対位置は保つ）。
+  -- ensureInScreen: 移動先のモニターの方が小さいときは、はみ出さないよう収める。
+  win:moveToScreen(target, true, true, 0)
   print(string.format("[pad] screen: %s → %s", screen:name() or "?", target:name() or "?"))
 end
 
@@ -363,7 +360,7 @@ end
 -- ---------------------------------------------------------------------
 -- 実機の並びは MPC/ドラム式（36が左下、行ごとに上へ）:
 --
---   上段  [48 スライド←]     [49 スライド→]     [50 別モニター最大化] [51 通知センター]   ← プレゼン/画面
+--   上段  [48 スライド←]     [49 スライド→]     [50 別モニターへ移動] [51 通知センター]   ← プレゼン/画面
 --   3段目 [44 左半分]        [45 右半分]        [46 最大化]           [47 モニター内巡回] ← ウィンドウ操作
 --   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]           [43 メモ]           ← 連絡/情報
 --   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]             [39 Sourcetree]     ← 開発
@@ -388,7 +385,7 @@ local PAD_ACTION = {
   -- 上段: プレゼン / 画面
   [48] = prevSlide,
   [49] = nextSlide,
-  [50] = moveToNextScreenMaximized,
+  [50] = moveToNextScreen,
   [51] = openNotificationCenter,
 }
 
