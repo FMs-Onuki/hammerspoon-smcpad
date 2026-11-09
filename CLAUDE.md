@@ -24,7 +24,7 @@ Sections, top to bottom:
    a `keepActive()` "warmer" filter, and per-app filters (`filterForApp`).
 4. Focus / window cycling: `focusWindow`, `cycleWindows(app[, screen])`, `focus` (app pads: all monitors),
    `cycleFrontmostOnScreen` (pad 47: frontmost app, current monitor only, all its Spaces).
-5. Window placement: `place(fraction)`, `moveToNextScreenMaximized`.
+5. Window placement: `place(fraction)`, `moveToNextScreen`.
 6. Presentation/screen actions: PowerPoint slide paging (`slide`), Notification Center.
 7. `PAD_ACTION`: MIDI note number (36–51, ch 9) → action.
 8. MIDI wiring: `handleMidi`, `syncDevices`, `hs.midi.deviceCallback` (hot-plug).
