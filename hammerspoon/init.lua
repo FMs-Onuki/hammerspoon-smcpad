@@ -202,8 +202,17 @@ end
 
 -- そのアプリの「今フォーカスしているウィンドウの次」へ移動する。
 -- 最後のウィンドウまで行ったら先頭に戻る（リング巡回）。
-local function cycleWindows(app)
+-- screen を渡すと、そのモニターにあるウィンドウだけを巡回する（別デスクトップ分も含む）。
+local function cycleWindows(app, screen)
   local wins = standardWindows(app)
+  if screen then
+    local onScreen = {}
+    for _, w in ipairs(wins) do
+      local s = w:screen()
+      if s and s:id() == screen:id() then onScreen[#onScreen + 1] = w end
+    end
+    wins = onScreen
+  end
   if #wins == 0 then return false end
 
   local current = hs.window.focusedWindow()
@@ -248,10 +257,13 @@ local function focus(spec)
   end
 end
 
--- 最前面アプリのウィンドウを巡回する（アプリを問わず使える汎用パッド）
-local function cycleFrontmostWindows()
+-- 前面アプリのウィンドウのうち、今のモニターにあるものだけを巡回する（別デスクトップ分も含む）。
+-- アプリのパッドは全モニターのウィンドウを巡回するので、こちらはモニターを絞って役割を分けている。
+local function cycleFrontmostOnScreen()
   local app = hs.application.frontmostApplication()
-  if app then cycleWindows(app) end
+  local current = hs.window.focusedWindow()
+  local screen = (current and current:screen()) or hs.mouse.getCurrentScreen()
+  if app and screen then cycleWindows(app, screen) end
 end
 
 -- ---------------------------------------------------------------------
@@ -294,7 +306,12 @@ local function moveToNextScreenMaximized()
     print("[pad] screen: 移動先のモニターがない（1台のみ）")
     return
   end
-  win:setFrame(workArea(target), 0)
+  -- setFrame で位置と大きさを一度に設定すると、移動はするが最大化されなかった（実機）。
+  -- 大きさを当てた時点でまだ元のモニター上にあり、元の画面に収まるよう縮められるため。
+  -- 先に移動先へ移してから広げる。
+  local area = workArea(target)
+  win:setTopLeft({ x = area.x, y = area.y })
+  win:setSize({ w = area.w, h = area.h })
   print(string.format("[pad] screen: %s → %s", screen:name() or "?", target:name() or "?"))
 end
 
@@ -347,7 +364,7 @@ end
 -- 実機の並びは MPC/ドラム式（36が左下、行ごとに上へ）:
 --
 --   上段  [48 スライド←]     [49 スライド→]     [50 別モニター最大化] [51 通知センター]   ← プレゼン/画面
---   3段目 [44 左半分]        [45 右半分]        [46 最大化]           [47 ウィンドウ巡回] ← ウィンドウ操作
+--   3段目 [44 左半分]        [45 右半分]        [46 最大化]           [47 モニター内巡回] ← ウィンドウ操作
 --   2段目 [40 Slack]         [41 ブラウザ]      [42 Claude]           [43 メモ]           ← 連絡/情報
 --   下段  [36 VSCode]        [37 PyCharm]       [38 cmux]             [39 Sourcetree]     ← 開発
 --
@@ -367,7 +384,7 @@ local PAD_ACTION = {
   [44] = leftHalf,
   [45] = rightHalf,
   [46] = maximize,
-  [47] = cycleFrontmostWindows,
+  [47] = cycleFrontmostOnScreen,
   -- 上段: プレゼン / 画面
   [48] = prevSlide,
   [49] = nextSlide,

@@ -22,7 +22,8 @@ Sections, top to bottom:
 2. App resolution/launch: `runningApp` / `launchApp` (bundle ID first, app name as fallback).
 3. Window enumeration across Spaces: `hs.window.filter` with `forceRefreshOnSpaceChange`,
    a `keepActive()` "warmer" filter, and per-app filters (`filterForApp`).
-4. Focus / window cycling: `focusWindow`, `cycleWindows`, `focus`.
+4. Focus / window cycling: `focusWindow`, `cycleWindows(app[, screen])`, `focus` (app pads: all monitors),
+   `cycleFrontmostOnScreen` (pad 47: frontmost app, current monitor only, all its Spaces).
 5. Window placement: `place(fraction)`, `moveToNextScreenMaximized`.
 6. Presentation/screen actions: PowerPoint slide paging (`slide`), Notification Center.
 7. `PAD_ACTION`: MIDI note number (36–51, ch 9) → action.
