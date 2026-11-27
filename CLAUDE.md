@@ -10,6 +10,7 @@ macro device for macOS: app focus/cycling, window placement, and desktop (Space)
 | `hammerspoon/init.lua` | The whole config (single Lua file) |
 | `install.sh` | Symlinks `hammerspoon/init.lua` to `~/.hammerspoon/init.lua` (existing file moved to `.bak`) |
 | `README.md` | User-facing docs (Japanese) |
+| `LICENSE` | MIT |
 
 Other configs (mac-engineer / windows-compat / tiling-wm) live in the separate
 `hammerspoon-variants` repo. Do not add them back here.
@@ -24,8 +25,13 @@ Sections, top to bottom:
    a `keepActive()` "warmer" filter, and per-app filters (`filterForApp`).
 4. Focus / window cycling: `focusWindow`, `cycleWindows(app[, screen])`, `focus` (app pads: all monitors),
    `cycleFrontmostOnScreen` (pad 47: frontmost app, current monitor only, all its Spaces).
-5. Window placement: `place(fraction)`, `moveToNextScreen`.
+5. Window placement: `maximize` (pad 46), `moveToNextScreen`, and the ⌥ keyboard actions
+   ported from the window-manager variant: `snap(side)` (pads 44/45 and ⌥9/⌥0, width cycles 1/2→2/3→1/3), `restore` (⌥-),
+   `showGrid` (⌥G), `toggleMinimize` (⌥M). All placements go through `setFrameRemembered` so ⌥- can undo
+   pad moves too. Hotkeys are bound after `PAD_ACTION` (`MOD`, `WINDOW_KEYS`, `GRID_SIZE` in user settings).
 6. Presentation/screen actions: PowerPoint slide paging (`slide`), Notification Center.
+   Office edit key: ⌥Return sends F2 only while Word/Excel/PowerPoint is frontmost (`officeEditHotkey`,
+   enabled/disabled from a subscribed `hs.window.filter` so ⌥Return is not swallowed in other apps).
 7. `PAD_ACTION`: MIDI note number (36–51, ch 9) → action.
 8. MIDI wiring: `handleMidi`, `syncDevices`, `hs.midi.deviceCallback` (hot-plug).
 
